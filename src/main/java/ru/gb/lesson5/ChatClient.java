@@ -8,36 +8,38 @@ import java.io.PrintWriter;
 import java.net.Socket;
 import java.time.Duration;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ThreadLocalRandom;
-import java.util.function.Consumer;
 
 public class ChatClient {
 
   private static ObjectMapper objectMapper = new ObjectMapper();
 
   public static void main(String[] args) {
-//    String clientLogin = "User_" + UUID.randomUUID().toString();
-//    String clientLogin = "nagibator";
+
     Scanner console = new Scanner(System.in);
-    String clientLogin = console.nextLine();
 
     // 127.0.0.1 или localhost
     try (Socket server = new Socket("localhost", 8888)) {
-      System.out.println("Успешно подключились к серверу");
+      System.out.println("Сервер ждет подключения");
 
       try (PrintWriter out = new PrintWriter(server.getOutputStream(), true)) {
         Scanner in = new Scanner(server.getInputStream());
 
-        String loginRequest = createLoginRequest(clientLogin);
-        out.println(loginRequest);
 
-        String loginResponseString = in.nextLine();
-        if (!checkLoginResponse(loginResponseString)) {
-          // TODO: Можно обогатить причиной, чтобы клиент получал эту причину
-          // (логин уже занят, ошибка аутентификации\авторизации, ...)
-          System.out.println("Не удалось подключиться к серверу");
-          return;
+        while (true) {
+          System.out.print("Ваше имя: ");
+          String loginRequest = createLoginRequest(console.nextLine());
+          out.println(loginRequest);
+
+          String loginResponseString = in.nextLine();
+
+          if(!checkLoginResponse(loginResponseString))
+            // TODO: Можно обогатить причиной, чтобы клиент получал эту причину
+            // (логин уже занят, ошибка аутентификации\авторизации, ...)
+            System.err.println("Не удалось подключиться к серверу");
+          else {
+            System.out.println("Вы успешно подключились к серверу");
+            break;
+          }
         }
 
         // client <----------------> server
@@ -52,8 +54,12 @@ public class ChatClient {
           while (true) {
             // TODO: парсим сообщение в AbstractRequest
             //  по полю type понимаем, что это за request, и обрабатываем его нужным образом
-            String msgFromServer = in.nextLine();
-            System.out.println("Сообщение от сервера: " + msgFromServer);
+            try {
+              String msgFromServer = in.nextLine();
+              System.out.println(msgFromServer);
+            } catch (Exception e) {
+              break;
+            }
           }
         }).start();
 
@@ -63,30 +69,37 @@ public class ChatClient {
           System.out.println("1. Послать сообщение другу");
           System.out.println("2. Послать сообщение всем");
           System.out.println("3. Получить список логинов");
+          System.out.println("4. Выход");
+
 
           String type = console.nextLine();
+
           if (type.equals("1")) {
-            // TODO: считываете с консоли логин, кому отправить
-
-            SendMessageRequest request = new SendMessageRequest();
-            request.setMessage(console.nextLine());
-            request.setRecipient("unknown"); // TODO указываем логин получателя
-
+            System.out.print("Кому: ");
+            String login = console.nextLine();
+            System.out.print("Cообщение: ");
+            String message = console.nextLine();
+            SendMessageRequest request = new SendMessageRequest(login, message);
             String sendMsgRequest = objectMapper.writeValueAsString(request);
             out.println(sendMsgRequest);
+
+          } else if (type.equals("2")) {
+            System.out.print("Cообщение: ");
+            String message = console.nextLine();
+            BroadcastRequest request = new BroadcastRequest(message);
+            String sendMsgRequest = objectMapper.writeValueAsString(request);
+            out.println(sendMsgRequest);
+
           } else if (type.equals("3")) {
-            // TODO: Создаете запрос отправки "всем"
-            // send(get users)
-            // String msgFromServer = in.readLine();
-            // ...
+            ListClientsRequest request = new ListClientsRequest();
+            String sendMsgRequest = objectMapper.writeValueAsString(request);
+            out.println(sendMsgRequest);
 
-//            serverListener.subscribe("get users", new Consumer<String>() {
-//              @Override
-//              public void accept(String s) {
-//                System.out.println("Список юзеров: " + s);
-//              }
-//            });
-
+          } else if (type.equals("4")) {
+            DisconnectRequest request = new DisconnectRequest();
+            String sendMsgRequest = objectMapper.writeValueAsString(request);
+            out.println(sendMsgRequest);
+            break;
           }
 
         }
@@ -95,7 +108,7 @@ public class ChatClient {
       System.err.println("Ошибка во время подключения к серверу: " + e.getMessage());
     }
 
-    System.out.println("Отключились от сервера");
+    System.out.println("Нет подключения к серверу");
   }
 
   private static String createLoginRequest(String login) {
@@ -126,38 +139,4 @@ public class ChatClient {
       throw new RuntimeException(e);
     }
   }
-
-//  private static class ServerListener implements Runnable {
-//    private final Scanner in;
-//    private final Map<String, List<Consumer<String>>> subscribers = new ConcurrentHashMap<>();
-//
-//    public ServerListener(Scanner in) {
-//      this.in = in;
-//    }
-//
-//    public void subscribe(String type, Consumer<String> consumer) {
-//      List<Consumer<String>> consumers = subscribers.getOrDefault(type, new ArrayList<>());
-//      consumers.add(consumer);
-//      subscribers.put(type, consumers);
-//    }
-//
-//    @Override
-//    public void run() {
-//      while (true) {
-//        String msgFromServer = in.nextLine();
-//
-//        // TODO: парсим сообщение в AbstractRequest
-//        //  по полю type понимаем, что это за request, и обрабатываем его нужным образом
-//        String type = null;
-//
-//        subscribers.getOrDefault(type, List.of()).forEach(it -> {
-//          it.accept(msgFromServer);
-//        });
-//        subscribers.remove(type);
-//
-//        System.out.println("Сообщение от сервера: " + msgFromServer);
-//      }
-//    }
-//  }
-
 }

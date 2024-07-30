@@ -8,6 +8,8 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.Scanner;
 import java.util.concurrent.ConcurrentHashMap;
@@ -75,75 +77,97 @@ public class ChatServer {
 
     @Override
     public void run() {
-      System.out.println("Подключен новый клиент");
+      System.out.println("Подключается новый клиент");
+      while (true) {
+        try {
+          String loginRequest = in.nextLine();
+          LoginRequest request = objectMapper.reader().readValue(loginRequest, LoginRequest.class);
+          this.clientLogin = request.getLogin();
+        } catch (IOException e) {
+          System.err.println("Не удалось прочитать сообщение от клиента [" + clientLogin + "]: " + e.getMessage());
+          String unsuccessfulResponse = createLoginResponse(false);
+          out.println(unsuccessfulResponse);
+          doClose();
+          return;
+        }
 
-      try {
-        String loginRequest = in.nextLine();
-        LoginRequest request = objectMapper.reader().readValue(loginRequest, LoginRequest.class);
-        this.clientLogin = request.getLogin();
-      } catch (IOException e) {
-        System.err.println("Не удалось прочитать сообщение от клиента [" + clientLogin + "]: " + e.getMessage());
+        System.out.println("Запрос от клиента: " + clientLogin);
+        // Выход из цикла, есле логин не занят
+        if (!clients.containsKey(clientLogin)) {
+          System.out.println("Пользователь " + clientLogin + ": успешный вход в систему");
+          break;
+        }
+
+        // Если логин занят, посылаем сообщение об ошибке подключения, новый цикл
         String unsuccessfulResponse = createLoginResponse(false);
         out.println(unsuccessfulResponse);
-        doClose();
-        return;
-      }
-
-      System.out.println("Запрос от клиента: " + clientLogin);
-      // Проверка, что логин не занят
-      if (clients.containsKey(clientLogin)) {
-        String unsuccessfulResponse = createLoginResponse(false);
-        out.println(unsuccessfulResponse);
-        doClose();
-        return;
+        System.err.println("Пользователь с логином " + clientLogin + " уже существует");
       }
 
       clients.put(clientLogin, this);
       String successfulLoginResponse = createLoginResponse(true);
       out.println(successfulLoginResponse);
-
       while (true) {
         String msgFromClient = in.nextLine();
-
         final String type;
         try {
           AbstractRequest request = objectMapper.reader().readValue(msgFromClient, AbstractRequest.class);
           type = request.getType();
         } catch (IOException e) {
-          System.err.println("Не удалось прочитать сообщение от клиента [" + clientLogin + "]: " + e.getMessage());
+          System.err.println("Не удалось прочитать сообщение от пользователя " + clientLogin + ": " + e.getMessage());
           sendMessage("Не удалось прочитать сообщение: " + e.getMessage());
           continue;
         }
 
         if (SendMessageRequest.TYPE.equals(type)) {
-          // Клиент прислал SendMessageRequest
-
-          final SendMessageRequest request;
           try {
-            request = objectMapper.reader().readValue(msgFromClient, SendMessageRequest.class);
+            sendMessageFromClient(msgFromClient);
           } catch (IOException e) {
-            System.err.println("Не удалось прочитать сообщение от клиента [" + clientLogin + "]: " + e.getMessage());
-            sendMessage("Не удалось прочитать сообщение SendMessageRequest: " + e.getMessage());
-            continue;
+            sendMessage("Не удалось прочитать сообщение sendMessageRequest: " + e.getMessage());
           }
-
-          ClientHandler clientTo = clients.get(request.getRecipient());
-          if (clientTo == null) {
-            sendMessage("Клиент с логином [" + request.getRecipient() + "] не найден");
-            continue;
+        } else if (BroadcastRequest.TYPE.equals(type)) {
+          try {
+            sendBroadcastMessage(msgFromClient);
+          } catch (IOException e) {
+            sendMessage("Не удалось прочитать сообщение BroadcastMessageRequest: " + e.getMessage());
           }
-          clientTo.sendMessage(request.getMessage());
-        } else if (false) { // BroadcastRequest.TYPE.equals(type)
-          // TODO: Читать остальные типы сообщений
-        } else if (false) { // DisconnectRequest.TYPE.equals(type)
-          break;
+        } else if (DisconnectRequest.TYPE.equals(type)) { // DisconnectRequest.TYPE.equals(type)
+          System.out.println("Отключаем " + this.clientLogin);
+          DisconnectClient();
+          return;
+        } else if (ListClientsRequest.TYPE.equals(type)) { // DisconnectRequest.TYPE.equals(type)
+          try {
+            getListClient();
+          } catch (IOException e) {
+            sendMessage("Не удалось получить список пользователей: " + e.getMessage());
+          }
         } else {
           System.err.println("Неизвестный тип сообщения: " + type);
           sendMessage("Неизвестный тип сообщения: " + type);
-          continue;
         }
       }
 
+    }
+
+    private boolean sendMessageFromClient(String msgFromClient) throws IOException {
+      SendMessageRequest request;
+      request = objectMapper.reader().readValue(msgFromClient, SendMessageRequest.class);
+
+
+      ClientHandler clientTo = clients.get(request.getRecipient());
+      if (clientTo == null) {
+        sendMessage("Пользователь " + request.getRecipient() + " отсутствует");
+        return false;
+      }
+      clientTo.sendMessage(this.clientLogin + ": " + request.getMessage());
+      return true;
+    }
+
+    private void DisconnectClient() {
+      clients.remove(clientLogin);
+      String message = "Пользователь " + clientLogin + " вышел из чата";
+      clients.keySet().forEach(c -> clients.get(c).sendMessage(message));
+      System.out.println(message);
       doClose();
     }
 
@@ -160,6 +184,49 @@ public class ChatServer {
     public void sendMessage(String message) {
       // TODO: нужно придумать структуру сообщения
       out.println(message);
+    }
+
+
+
+    private void sendBroadcastMessage(String messageFromClient) throws IOException {
+      BroadcastRequest request;
+      try {
+        request = objectMapper.reader().readValue(messageFromClient, BroadcastRequest.class);
+        String login = this.clientLogin;
+        ClientHandler client = clients.get(login);
+        if (client == null) {
+          sendMessage("Сервер сообщает: Пользователь " + login + " отсутствует");
+        } else {
+          String msg = request.getMessage();
+          clients.keySet().stream()
+                  .filter(c -> !c.equals(login))
+                  .forEach(c -> clients.get(c).sendMessage(this.clientLogin + ": " + msg));
+
+        }
+      } catch (IOException e) {
+        System.err.println("Не удалось прочитать сообщение от " + clientLogin + ": " + e.getMessage());
+        throw new IOException(e.getMessage());
+      }
+    }
+
+    private void getListClient() throws IOException {
+      ListResponse response = new ListResponse();
+      try {
+        List<User> users = new ArrayList<>();
+        for (String client : clients.keySet()) {
+          if (!client.equals(clientLogin)) {
+            User user = new User();
+            user.setLogin(client);
+            users.add(user);
+          }
+        }
+        response.setUsers(users);
+        String sendMsgRequest = objectMapper.writeValueAsString(response);
+        sendMessage(sendMsgRequest);
+      } catch (IOException e) {
+        System.err.println("Не удалось прочитать сообщение от клиента [" + clientLogin + "]: " + e.getMessage());
+        throw new IOException(e.getMessage());
+      }
     }
 
     private String createLoginResponse(boolean success) {

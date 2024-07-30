@@ -18,6 +18,12 @@ public class SendMessageRequest extends AbstractRequest {
     setType(TYPE);
   }
 
+  public SendMessageRequest(String recipient, String message) {
+    this();
+    this.recipient = recipient;
+    this.message = message;
+  }
+
   public String getRecipient() {
     return recipient;
   }
